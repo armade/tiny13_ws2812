@@ -1,0 +1,360 @@
+   1               		.file	"main.c"
+   2               	__SP_L__ = 0x3d
+   3               	__SREG__ = 0x3f
+   4               	__tmp_reg__ = 0
+   5               	__zero_reg__ = 1
+   6               		.text
+   7               	.Ltext0:
+   8               		.cfi_sections	.debug_frame
+   9               	.global	__vector_6
+  11               	__vector_6:
+  12               	.LFB11:
+  13               		.file 1 "main.c"
+   1:main.c        **** /**
+   2:main.c        ****  * Rainbow on single LED WS2812.
+   3:main.c        **** 	                           _____
+   4:main.c        ****                (RESET) PB5 1 -|  u  |- 8 VCC
+   5:main.c        ****     (PCINT3/CLKI/ADC3) PB3 2 -|     |- 7 PB2 (SCK/ADC1/T0/PCINT2)
+   6:main.c        ****          (PCINT4/ADC2) PB4 3 -|     |- 6 PB1 (MISO/AIN1/OC0B/INT0/PCINT1)
+   7:main.c        ****                        GND 4 -|_____|- 5 PB0 (MOSI/AIN0/OC0A/PCINT0)  -> WS2812 data
+   8:main.c        **** 								
+   9:main.c        **** */
+  10:main.c        **** 
+  11:main.c        **** #include <avr/io.h>
+  12:main.c        **** #include <util/delay.h>
+  13:main.c        **** #include "light_ws2812.h"
+  14:main.c        **** #include <avr/sleep.h>
+  15:main.c        **** 
+  16:main.c        **** #define NR_OF_LEDS 1
+  17:main.c        **** 
+  18:main.c        **** uint8_t delay = 5;
+  19:main.c        **** register uint8_t s       asm("r5"); // lcg var
+  20:main.c        **** register uint8_t a       asm("r6"); // lcg var
+  21:main.c        **** 
+  22:main.c        **** struct pixel {
+  23:main.c        **** 	uint8_t g;
+  24:main.c        **** 	uint8_t r;
+  25:main.c        **** 	uint8_t b;
+  26:main.c        **** }pixels[NR_OF_LEDS];
+  27:main.c        **** 
+  28:main.c        **** 
+  29:main.c        **** inline static uint8_t gamma_corr(uint8_t input)
+  30:main.c        **** {
+  31:main.c        **** 	uint32_t accu;
+  32:main.c        **** 
+  33:main.c        **** 	accu = (uint32_t)input*input*input + (1UL<<15); // 27 bit max
+  34:main.c        **** 	accu>>=16;
+  35:main.c        **** 	
+  36:main.c        **** 	return accu;
+  37:main.c        **** }
+  38:main.c        **** 
+  39:main.c        **** 
+  40:main.c        **** 
+  41:main.c        **** static inline int Neo_Pixel_Ring_set(struct pixel *LED, uint8_t nr, uint16_t brightness) {
+  42:main.c        **** 	if (nr < NR_OF_LEDS) {
+  43:main.c        **** 
+  44:main.c        **** 		LED->r = ((uint16_t)gamma_corr(LED->r)*brightness)>>8;
+  45:main.c        **** 		LED->g = ((uint16_t)gamma_corr(LED->g)*brightness)>>8;
+  46:main.c        **** 		LED->b = ((uint16_t)gamma_corr(LED->b)*brightness)>>8;
+  47:main.c        **** 	}
+  48:main.c        **** 	return 0;
+  49:main.c        **** }
+  50:main.c        **** 
+  51:main.c        **** static inline char color_wheel(uint8_t pos, struct pixel *color)
+  52:main.c        **** {
+  53:main.c        ****     if (pos < 85) {
+  54:main.c        ****     	color->r = pos * 3;
+  55:main.c        ****     	color->g = 255 - pos * 3;
+  56:main.c        ****     	color->b = 0;
+  57:main.c        ****     } else if (pos < 170) {
+  58:main.c        ****         pos -= 85;
+  59:main.c        ****         color->r = 255 - pos * 3;
+  60:main.c        ****         color->g = 0;
+  61:main.c        ****         color->b = pos * 3;
+  62:main.c        ****     } else {
+  63:main.c        ****         pos -= 170;
+  64:main.c        ****         color->r  = 0;
+  65:main.c        ****         color->g = pos * 3;
+  66:main.c        ****         color->b = 255 - pos * 3;
+  67:main.c        ****     }
+  68:main.c        **** 	
+  69:main.c        **** 	delay = 35;
+  70:main.c        **** 	return 0;
+  71:main.c        **** }
+  72:main.c        **** 
+  73:main.c        **** static uint8_t rand(void) {
+  74:main.c        **** 	s ^= s << 3;
+  75:main.c        **** 	s ^= s >> 5;
+  76:main.c        **** 	s ^= a++ >> 2;
+  77:main.c        **** 	return s;
+  78:main.c        **** }
+  79:main.c        **** 
+  80:main.c        **** 
+  81:main.c        **** static void RGB_fire_run(struct pixel *color1,struct pixel *color2)
+  82:main.c        **** {
+  83:main.c        **** 	uint8_t brightness = (rand());
+  84:main.c        **** 	
+  85:main.c        **** 	if(brightness<64)
+  86:main.c        **** 		brightness = 64;
+  87:main.c        **** 
+  88:main.c        **** 	delay = rand()&127;
+  89:main.c        **** 
+  90:main.c        **** 	if(delay < 5)
+  91:main.c        **** 		delay = 5;
+  92:main.c        **** 	
+  93:main.c        **** 	*color1=*color2;
+  94:main.c        **** 	Neo_Pixel_Ring_set(color1,0,brightness);
+  95:main.c        **** 	
+  96:main.c        **** 	return;
+  97:main.c        **** }
+  98:main.c        **** 
+  99:main.c        **** ISR(TIM0_COMPA_vect)
+ 100:main.c        **** {
+  14               		.loc 1 100 0
+  15               		.cfi_startproc
+  16 0000 1F92      		push r1
+  17               	.LCFI0:
+  18               		.cfi_def_cfa_offset 3
+  19               		.cfi_offset 1, -2
+  20 0002 0F92      		push r0
+  21               	.LCFI1:
+  22               		.cfi_def_cfa_offset 4
+  23               		.cfi_offset 0, -3
+  24 0004 0FB6      		in r0,__SREG__
+  25 0006 0F92      		push r0
+  26 0008 1124      		clr __zero_reg__
+  27               	/* prologue: Signal */
+  28               	/* frame size = 0 */
+  29               	/* stack size = 3 */
+  30               	.L__stack_usage = 3
+ 101:main.c        **** 	TCNT0 = 0;
+  31               		.loc 1 101 0
+  32 000a 12BE      		out 0x32,__zero_reg__
+  33               	/* epilogue start */
+ 102:main.c        **** }
+  34               		.loc 1 102 0
+  35 000c 0F90      		pop r0
+  36 000e 0FBE      		out __SREG__,r0
+  37 0010 0F90      		pop r0
+  38 0012 1F90      		pop r1
+  39 0014 1895      		reti
+  40               		.cfi_endproc
+  41               	.LFE11:
+  43               		.section	.text.startup,"ax",@progbits
+  44               	.global	main
+  46               	main:
+  47               	.LFB12:
+ 103:main.c        **** 
+ 104:main.c        **** main(void)
+ 105:main.c        **** {
+  48               		.loc 1 105 0
+  49               		.cfi_startproc
+  50               	/* prologue: function */
+  51               	/* frame size = 0 */
+  52               	/* stack size = 0 */
+  53               	.L__stack_usage = 0
+  54               	.LVL0:
+ 106:main.c        **** 	struct pixel p = {255, 10, 140};
+ 107:main.c        **** 	static char cou = 0;
+ 108:main.c        **** 	
+ 109:main.c        **** 	// 9.6MHz/(256*37) = 1013HZ ~ 1ms
+ 110:main.c        **** 	TCCR0B = (1 << CS02);   // timer prescaler == 8
+  55               		.loc 1 110 0
+  56 0000 84E0      		ldi r24,lo8(4)
+  57 0002 83BF      		out 0x33,r24
+ 111:main.c        **** 	TCCR0A = (1 << WGM01);  // timer set to CTC mode
+  58               		.loc 1 111 0
+  59 0004 92E0      		ldi r25,lo8(2)
+  60 0006 9FBD      		out 0x2f,r25
+ 112:main.c        **** 	TIMSK0 = (1 << OCIE0A); // enable CTC timer interrupt
+  61               		.loc 1 112 0
+  62 0008 89BF      		out 0x39,r24
+ 113:main.c        **** 	OCR0A = 37; 
+  63               		.loc 1 113 0
+  64 000a 85E2      		ldi r24,lo8(37)
+  65 000c 86BF      		out 0x36,r24
+ 114:main.c        **** 	
+ 115:main.c        **** 	sei();
+  66               		.loc 1 115 0
+  67               	/* #APP */
+  68               	 ;  115 "main.c" 1
+  69 000e 7894      		sei
+  70               	 ;  0 "" 2
+ 116:main.c        **** 
+ 117:main.c        **** 	set_sleep_mode(SLEEP_MODE_IDLE);    // only disable cpu and flash clk while sleeping
+  71               		.loc 1 117 0
+  72               	/* #NOAPP */
+  73 0010 85B7      		in r24,0x35
+  74 0012 877E      		andi r24,lo8(-25)
+  75 0014 85BF      		out 0x35,r24
+  76               	.LBB4:
+  77               	.LBB5:
+  69:main.c        **** 	return 0;
+  78               		.loc 1 69 0
+  79 0016 C3E2      		ldi r28,lo8(35)
+  80               	.L7:
+  81               	.LBE5:
+  82               	.LBE4:
+ 118:main.c        **** 	/* loop */
+ 119:main.c        **** 	while (1) {
+ 120:main.c        **** 
+ 121:main.c        **** 		color_wheel(cou++,&pixels[0]);
+  83               		.loc 1 121 0
+  84 0018 8091 0000 		lds r24,cou.1791
+  85 001c 91E0      		ldi r25,lo8(1)
+  86 001e 980F      		add r25,r24
+  87 0020 9093 0000 		sts cou.1791,r25
+  88               	.LVL1:
+  89               	.LBB8:
+  90               	.LBB6:
+  53:main.c        ****     	color->r = pos * 3;
+  91               		.loc 1 53 0
+  92 0024 8535      		cpi r24,lo8(85)
+  93 0026 00F0      		brlo .L13
+  57:main.c        ****         pos -= 85;
+  94               		.loc 1 57 0
+  95 0028 8A3A      		cpi r24,lo8(-86)
+  96 002a 00F0      		brlo .L14
+  63:main.c        ****         color->r  = 0;
+  97               		.loc 1 63 0
+  98 002c 8A5A      		subi r24,lo8(-(86))
+  99               	.LVL2:
+  64:main.c        ****         color->g = pos * 3;
+ 100               		.loc 1 64 0
+ 101 002e 1092 0000 		sts pixels+1,__zero_reg__
+  65:main.c        ****         color->b = 255 - pos * 3;
+ 102               		.loc 1 65 0
+ 103 0032 982F      		mov r25,r24
+ 104 0034 990F      		lsl r25
+ 105 0036 980F      		add r25,r24
+ 106 0038 9093 0000 		sts pixels,r25
+  66:main.c        ****     }
+ 107               		.loc 1 66 0
+ 108 003c 982F      		mov r25,r24
+ 109 003e 990F      		lsl r25
+ 110 0040 990F      		lsl r25
+ 111 0042 891B      		sub r24,r25
+ 112               	.LVL3:
+ 113 0044 8150      		subi r24,lo8(-(-1))
+ 114 0046 8093 0000 		sts pixels+2,r24
+ 115               	.L4:
+  69:main.c        **** 	return 0;
+ 116               		.loc 1 69 0
+ 117 004a C093 0000 		sts delay,r28
+ 118               	.LVL4:
+ 119               	.LBE6:
+ 120               	.LBE8:
+ 122:main.c        **** 		//RGB_fire_run(&pixels[0],&p);
+ 123:main.c        **** 		ws2812_setleds((struct cRGB *)pixels, NR_OF_LEDS);
+ 121               		.loc 1 123 0
+ 122 004e 61E0      		ldi r22,lo8(1)
+ 123 0050 70E0      		ldi r23,0
+ 124 0052 80E0      		ldi r24,lo8(pixels)
+ 125 0054 90E0      		ldi r25,hi8(pixels)
+ 126 0056 00D0      		rcall ws2812_setleds
+ 127               	.LVL5:
+ 128               	.L11:
+ 124:main.c        **** 		while(delay--)
+ 129               		.loc 1 124 0
+ 130 0058 8091 0000 		lds r24,delay
+ 131 005c 9FEF      		ldi r25,lo8(-1)
+ 132 005e 980F      		add r25,r24
+ 133 0060 9093 0000 		sts delay,r25
+ 134 0064 8823      		tst r24
+ 135 0066 01F0      		breq .L7
+ 125:main.c        **** 			sleep_mode();// sleep until timer interrupt is triggered
+ 136               		.loc 1 125 0
+ 137 0068 85B7      		in r24,0x35
+ 138 006a 8062      		ori r24,lo8(32)
+ 139 006c 85BF      		out 0x35,r24
+ 140               	/* #APP */
+ 141               	 ;  125 "main.c" 1
+ 142 006e 8895      		sleep
+ 143               		
+ 144               	 ;  0 "" 2
+ 145               	/* #NOAPP */
+ 146 0070 85B7      		in r24,0x35
+ 147 0072 8F7D      		andi r24,lo8(-33)
+ 148 0074 85BF      		out 0x35,r24
+ 149 0076 00C0      		rjmp .L11
+ 150               	.LVL6:
+ 151               	.L13:
+ 152               	.LBB9:
+ 153               	.LBB7:
+  54:main.c        ****     	color->g = 255 - pos * 3;
+ 154               		.loc 1 54 0
+ 155 0078 982F      		mov r25,r24
+ 156 007a 990F      		lsl r25
+ 157 007c 980F      		add r25,r24
+ 158 007e 9093 0000 		sts pixels+1,r25
+  55:main.c        ****     	color->b = 0;
+ 159               		.loc 1 55 0
+ 160 0082 982F      		mov r25,r24
+ 161 0084 990F      		lsl r25
+ 162 0086 990F      		lsl r25
+ 163 0088 891B      		sub r24,r25
+ 164               	.LVL7:
+ 165 008a 8150      		subi r24,lo8(-(-1))
+ 166 008c 8093 0000 		sts pixels,r24
+  56:main.c        ****     } else if (pos < 170) {
+ 167               		.loc 1 56 0
+ 168 0090 1092 0000 		sts pixels+2,__zero_reg__
+ 169 0094 00C0      		rjmp .L4
+ 170               	.LVL8:
+ 171               	.L14:
+  58:main.c        ****         color->r = 255 - pos * 3;
+ 172               		.loc 1 58 0
+ 173 0096 8555      		subi r24,lo8(-(-85))
+ 174               	.LVL9:
+  59:main.c        ****         color->g = 0;
+ 175               		.loc 1 59 0
+ 176 0098 982F      		mov r25,r24
+ 177 009a 990F      		lsl r25
+ 178 009c 990F      		lsl r25
+ 179 009e 282F      		mov r18,r24
+ 180 00a0 291B      		sub r18,r25
+ 181 00a2 922F      		mov r25,r18
+ 182 00a4 9150      		subi r25,lo8(-(-1))
+ 183 00a6 9093 0000 		sts pixels+1,r25
+  60:main.c        ****         color->b = pos * 3;
+ 184               		.loc 1 60 0
+ 185 00aa 1092 0000 		sts pixels,__zero_reg__
+  61:main.c        ****     } else {
+ 186               		.loc 1 61 0
+ 187 00ae 982F      		mov r25,r24
+ 188 00b0 990F      		lsl r25
+ 189 00b2 890F      		add r24,r25
+ 190               	.LVL10:
+ 191 00b4 8093 0000 		sts pixels+2,r24
+ 192 00b8 00C0      		rjmp .L4
+ 193               	.LBE7:
+ 194               	.LBE9:
+ 195               		.cfi_endproc
+ 196               	.LFE12:
+ 198               		.local	cou.1791
+ 199               		.comm	cou.1791,1,1
+ 200               		.comm	pixels,3,1
+ 201               	.global	delay
+ 202               		.data
+ 205               	delay:
+ 206 0000 05        		.byte	5
+ 207               		.text
+ 208               	.Letext0:
+ 209               		.file 2 "light_ws2812.h"
+ 210               		.file 3 "c:\\program files (x86)\\atmel\\studio\\7.0\\toolchain\\avr8\\avr8-gnu-toolchain\\avr\\in
+DEFINED SYMBOLS
+                            *ABS*:00000000 main.c
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:2      *ABS*:0000003d __SP_L__
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:3      *ABS*:0000003f __SREG__
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:4      *ABS*:00000000 __tmp_reg__
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:5      *ABS*:00000001 __zero_reg__
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:11     .text:00000000 __vector_6
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:46     .text.startup:00000000 main
+                             .bss:00000000 cou.1791
+                            *COM*:00000003 pixels
+C:\Users\PM\AppData\Local\Temp\ccsJq0nw.s:205    .data:00000000 delay
+
+UNDEFINED SYMBOLS
+ws2812_setleds
+__do_copy_data
+__do_clear_bss
